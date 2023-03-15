@@ -2,6 +2,7 @@ import numpy as np
 import random
 import torch
 import scipy.stats as stats
+import cv2
 
 
 # # # # # # # # # # # # # # # # # # # # # 
@@ -86,22 +87,92 @@ def cut_mix_label_adaptive(unlabeled_image, unlabeled_mask, unlabeled_logits,
 # # # # # # # # # # # # # # # # # # # # # 
 # # 2 cutmix  
 # # # # # # # # # # # # # # # # # # # # #
-def cut_mix(image_A=None, image_B=None, label=None):
-        image_A_cutmix = image_A.clone()
-        image_B_cutmix = image_B.clone()
-        label_cutmix = label.clone()
-        u_rand_index = torch.randperm(image_A.size()[0])[:image_A.size()[0]].cuda()
-        u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_A.size(), lam=np.random.beta(4, 4))
+def cut_mix(image_u_aug=None, label_u_aug=None, logits_u_aug=None):
+        image_cutmix = image_u_aug.clone()
+        label_cutmix = label_u_aug.clone()
+        logits_cutmix = logits_u_aug.clone()
+        u_rand_index = torch.randperm(image_u_aug.size()[0])[:image_u_aug.size()[0]].cuda()
+        u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(4, 4))
 
-        for i in range(0, image_A_cutmix.shape[0]):
-            image_A_cutmix[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                image_A[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
-
-            image_B_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                image_B[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+        for i in range(0, image_cutmix.shape[0]):
+            image_cutmix[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+                image_u_aug[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
 
             label_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                label[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+                label_u_aug[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
 
-        return image_A_cutmix, image_B_cutmix, label_cutmix
- 
+            logits_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+                logits_u_aug[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+
+        return image_cutmix, label_cutmix, logits_cutmix
+
+
+# # # # # # # # # # # # # # # # # # # # # 
+# # 3 cutout  
+# # # # # # # # # # # # # # # # # # # # #
+def cut_out(image_u_aug=None, label_u_aug=None, logits_u_aug=None):
+        image_cutmix = image_u_aug.clone()
+        label_cutmix = label_u_aug.clone()
+        logits_cutmix = logits_u_aug.clone()
+        u_rand_index = torch.randperm(image_u_aug.size()[0])[:image_u_aug.size()[0]].cuda()
+        u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(4, 4))
+
+        for i in range(0, image_cutmix.shape[0]):
+            image_cutmix[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 0
+
+            label_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 0
+
+            logits_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 0
+
+        return image_cutmix, label_cutmix, logits_cutmix
+
+
+# # # # # # # # # # # # # # # # # # # # # 
+# # 4 cutmix_with_label_inject  
+# # # # # # # # # # # # # # # # # # # # #
+def cut_mix_label_inject(unlabeled_image, unlabeled_mask, unlabeled_logits, 
+        labeled_image, labeled_mask):
+    assert labeled_image.shape == unlabeled_image.shape, "Ensure shape match between lb and unlb"
+    mix_unlabeled_image = unlabeled_image.clone()
+    mix_unlabeled_target = unlabeled_mask.clone()
+    mix_unlabeled_logits = unlabeled_logits.clone()
+    labeled_logits = torch.ones_like(labeled_mask)
+
+    # 1) get the random mixing objects
+    u_rand_index = torch.randperm(unlabeled_image.size()[0])[:unlabeled_image.size()[0]]
+    
+    # 2) get box
+    l_bbx1, l_bby1, l_bbx2, l_bby2 = rand_bbox(unlabeled_image.size(), lam=np.random.beta(4, 4))
+    
+    # 3) labeled inject
+    for i in range(0, mix_unlabeled_image.shape[0]):
+        mix_unlabeled_image[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+        labeled_image[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+    
+        mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            labeled_mask[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+        
+        mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            labeled_logits[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+    
+    return mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits 
+
+
+def rotate(image, label, confidence):
+    # Rotate the image with an angle between -10 and 10
+    size = image.size()
+    if len(size) == 4:
+        w = size[2]
+        h = size[3]
+    elif len(size) == 3:
+        w = size[1]
+        h = size[2]
+
+    r = 45 # 旋转角度
+    angle = random.randint(-r, r)
+    center = (w / 2, h / 2)
+    rot_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    image = cv2.warpAffine(image, rot_matrix, (w, h), flags=cv2.INTER_NEAREST)#, borderMode=cv2.BORDER_REFLECT)
+    label = cv2.warpAffine(label, rot_matrix, (w, h), flags=cv2.INTER_NEAREST)#,  borderMode=cv2.BORDER_REFLECT)
+    confidence = cv2.warpAffine(label, rot_matrix, (w, h), flags=cv2.INTER_NEAREST, borderValue=1.0)
+    return image, label, confidence

@@ -8,10 +8,8 @@ python -m torch.distributed.launch \
     --nproc_per_node=${ngpu} \
     --node_rank=0 \
     --master_port=${tport} \
-    $ROOT/train_uef.py \
-    --config=$ROOT/exps/mrun_vocs/uef/config_uef.yaml --seed 2 --port ${tport}
-    # --config=$ROOT/exps/mrun_vocs/suponly/config_suponly.yaml --seed 2 --port ${tport}
-    # --config=$ROOT/exps/mrun_vocs/semi/config_semi.yaml --seed 2 --port ${tport}
+    $ROOT/train_semi.py \
+    --config=$ROOT/exps/mrun_vocs/semi/config_semi.yaml --seed 2 --port ${tport}
 
 # ---- -----
     # --config=$ROOT/exps/zrun_vocs/voc_semi_fine92/config_semi.yaml --seed 2 --port ${tport}

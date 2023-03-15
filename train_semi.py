@@ -15,7 +15,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from pseudo.dataset.augs_ALIA import cut_mix_label_adaptive, cut_mix
+from pseudo.dataset.augs_ALIA import cut_mix_label_adaptive, cut_mix, cut_out, cut_mix_label_inject, rotate
 from pseudo.dataset.builder import get_loader
 from pseudo.models.model_helper import ModelBuilder
 from pseudo.utils.dist_helper import setup_distributed
@@ -299,6 +299,7 @@ def train(
         _, image_l, label_l = loader_l_iter.next()
         image_l, label_l = image_l.cuda(), label_l.cuda()
         _, image_u_weak, image_u_aug, _ = loader_u_iter.next()
+        # weak: weak aug, aug: intensity-base aug
         image_u_weak, image_u_aug = image_u_weak.cuda(), image_u_aug.cuda()
         
         # start the training
@@ -325,34 +326,54 @@ def train(
                 pred_u, _ = model_teacher(image_u_weak.detach())
                 pred_u = F.softmax(pred_u, dim=1) # 归一化
                 # obtain pseudos
-                logits_u_aug, label_u_aug = torch.max(pred_u, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
+                pseudo_confid, pseudo_label = torch.max(pred_u, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
                 
                 # obtain confidence
                 entropy = -torch.sum(pred_u * torch.log(pred_u + 1e-10), dim=1)
                 entropy /= np.log(cfg["net"]["num_classes"])
                 confidence = 1.0 - entropy
-                confidence = confidence * logits_u_aug
+                confidence = confidence * pseudo_confid
                 confidence = confidence.mean(dim=[1,2])  # 1*C
                 confidence = confidence.cpu().numpy().tolist()
                 # confidence = logits_u_aug.ge(p_threshold).float().mean(dim=[1,2]).cpu().numpy().tolist()
                 del pred_u
             model.train()
             
-            # 2. apply cutmix on image_u_aug
-            if cfg["trainer"]["unsupervised"].get("use_cutmix", False):
+            # 2. apply strong on image_u_aug
+            if cfg["trainer"]["unsupervised"].get("use_strong", False):
                 if cfg["trainer"]["unsupervised"].get("use_cutmix_adaptive", False):
                     # using adaptive cutmix (with label inject)
-                    image_u_aug, label_u_aug, logits_u_aug = cut_mix_label_adaptive(
+                    image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
                             image_u_aug,
-                            label_u_aug,
-                            logits_u_aug, 
+                            pseudo_label,
+                            pseudo_confid, 
                             image_l,
                             label_l, 
                             confidence
                         )
-                else:
+                elif cfg["trainer"]["unsupervised"].get("use_rotate", False):
+                    # using rotate
+                    image_u_aug, pseudo_label, pseudo_confid = rotate(image_u_aug, pseudo_label, pseudo_confid)
+
+                elif cfg["trainer"]["unsupervised"].get("use_cutmix", False):
                     # using navie cutmix
-                    image_u_aug, label_u_aug, logits_u_aug = cut_mix(image_u_aug, label_u_aug, logits_u_aug)
+                    image_u_aug, pseudo_label, pseudo_confid = cut_mix(image_u_aug, pseudo_label, pseudo_confid)
+
+                elif cfg["trainer"]["unsupervised"].get("use_cutout", False):
+                    # using navie cutout
+                    image_u_aug, pseudo_label, pseudo_confid = cut_out(image_u_aug, pseudo_label, pseudo_confid)
+
+                elif cfg["trainer"]["unsupervised"].get("use_cutmix_labelinj", False):
+                    # using cutmix_label_inject
+                    image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_inject(
+                            image_u_aug,
+                            pseudo_label,
+                            pseudo_confid, 
+                            image_l,
+                            label_l,
+                        )  
+                else:
+                    raise NotImplementedError('The aug method is not implemented, please check code!')
 
             # 3. forward concate labeled + unlabeld into student networks
             num_labeled = len(image_l)
@@ -380,10 +401,10 @@ def train(
             # 5. unsupervised loss
             # label_u_aug 和 logits_u_aug用detach是要斩断gradient
             unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_threshold( # 这个损失函数倒是可以借鉴
-                        pred_u_strong, label_u_aug.detach(),
-                        logits_u_aug.detach(), thresh=p_threshold)
+                        pred_u_strong, pseudo_label.detach(),
+                        pseudo_confid.detach(), thresh=p_threshold)
             unsup_loss *= cfg["trainer"]["unsupervised"].get("loss_weight", 1.0)
-            del pred_l, pred_u_strong, label_u_aug, logits_u_aug
+            del pred_l, pred_u_strong, pseudo_label, pseudo_confid
 
         loss = sup_loss + unsup_loss
 
