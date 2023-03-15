@@ -339,8 +339,20 @@ def train(
             model.train()
             
             # 2. apply cutmix on image_u_aug
-            # print(image_u_aug.shape, label_u_aug.shape, logits_u_aug.shape)
-            image_u_aug, label_u_aug, logits_u_aug = cut_mix(image_u_aug, label_u_aug, logits_u_aug)
+            if cfg["trainer"]["unsupervised"].get("use_cutmix", False):
+                if cfg["trainer"]["unsupervised"].get("use_cutmix_adaptive", False):
+                    # using adaptive cutmix (with label inject)
+                    image_u_aug, label_u_aug, logits_u_aug = cut_mix_label_adaptive(
+                            image_u_aug,
+                            label_u_aug,
+                            logits_u_aug, 
+                            image_l,
+                            label_l, 
+                            confidence
+                        )
+                else:
+                    # using navie cutmix
+                    image_u_aug, label_u_aug, logits_u_aug = cut_mix(image_u_aug, label_u_aug, logits_u_aug)
 
             # 3. forward concate labeled + unlabeld into student networks
             num_labeled = len(image_l)
