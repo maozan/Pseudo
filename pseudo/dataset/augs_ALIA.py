@@ -2,6 +2,7 @@ import numpy as np
 import random
 import torch
 import scipy.stats as stats
+import torchvision.transforms as T
 import cv2
 
 
@@ -122,7 +123,7 @@ def cut_out(image_u_aug=None, label_u_aug=None, logits_u_aug=None):
 
             label_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 0
 
-            logits_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 0
+            logits_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = 1.0
 
         return image_cutmix, label_cutmix, logits_cutmix
 
@@ -159,20 +160,34 @@ def cut_mix_label_inject(unlabeled_image, unlabeled_mask, unlabeled_logits,
 
 
 def rotate(image, label, confidence):
-    # Rotate the image with an angle between -10 and 10
-    size = image.size()
-    if len(size) == 4:
-        w = size[2]
-        h = size[3]
-    elif len(size) == 3:
-        w = size[1]
-        h = size[2]
 
-    r = 45 # 旋转角度
-    angle = random.randint(-r, r)
-    center = (w / 2, h / 2)
-    rot_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    image = cv2.warpAffine(image, rot_matrix, (w, h), flags=cv2.INTER_NEAREST)#, borderMode=cv2.BORDER_REFLECT)
-    label = cv2.warpAffine(label, rot_matrix, (w, h), flags=cv2.INTER_NEAREST)#,  borderMode=cv2.BORDER_REFLECT)
-    confidence = cv2.warpAffine(label, rot_matrix, (w, h), flags=cv2.INTER_NEAREST, borderValue=1.0)
-    return image, label, confidence
+    rotater = T.RandomRotation(degrees=(0, 180))
+    # imgs = [rotater(img) for img in image]
+    imgs = rotater(image)
+    label = rotater(label)
+    rotater_con = T.RandomRotation(degrees=(0, 180), fill=1.0)
+    confidence = rotater_con(confidence)
+
+    return imgs, label, confidence
+
+def Perspective(image, label, confidence):
+
+    perspective_transformer = T.RandomPerspective(distortion_scale=0.6, p=1.0)
+    # imgs = [rotater(img) for img in image]
+    imgs = perspective_transformer(image)
+    label = perspective_transformer(label)
+    perspective_transformer_conf = T.RandomPerspective(distortion_scale=0.6, p=1.0, fill=1.0)
+    confidence = perspective_transformer_conf(confidence)
+
+    return imgs, label, confidence
+
+def Affine(image, label, confidence):
+
+    affine_transfomer = T.RandomAffine(degrees=(30, 70), translate=(0.1, 0.3), scale=(0.5, 0.75))
+    # imgs = [rotater(img) for img in image]
+    imgs = affine_transfomer(image)
+    label = affine_transfomer(label)
+    affine_transfomer_conf = T.RandomAffine(degrees=(30, 70), translate=(0.1, 0.3), scale=(0.5, 0.75), fill=1.0)
+    confidence = affine_transfomer_conf(confidence)
+
+    return imgs, label, confidence

@@ -6,7 +6,7 @@ dataset: # Required.
   train:
     data_root: /data1/lcx/maozan/SemiSL/DATASETS/VOCdevkit/VOC2012
     data_list: ./data/splitsall/pascal/662/labeled.txt
-    batch_size: 8
+    batch_size: 12
     flip: True
     rand_resize: [0.5, 2.0]
     resize_base_size: 500
@@ -56,10 +56,10 @@ trainer: # Required.
     use_rotate: False
     use_perspective: False
     use_Affine: False
-    use_cutout: True
+    use_cutout: False
     use_cutmix: False
     use_cutmix_labelinj: False
-    use_cutmix_adaptive: False
+    use_cutmix_adaptive: True
     use_cutmix_trigger_prob: 1.0
 
 # # # # # # # # # # # # # # 

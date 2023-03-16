@@ -60,12 +60,12 @@ class voc_dset(BaseDataset):
         image_path = os.path.join(self.data_root, self.list_sample_new[index][0])
         label_path = os.path.join(self.data_root, self.list_sample_new[index][1])
         image = self.img_loader(image_path, "RGB")
+        # print('=========', image.getpixel((100, 100)))
         label = self.img_loader(label_path, "L")
 
         if self.transform_strong is None:
             image, label = self.transform_weak(image, label)
-            # print(image.shape, label.shape)
-            image, label = self.trf_normalize(image, label)
+            image, label = self.trf_normalize(image, label) # 处理成tensor，归一化后，成小数了
             if not self.flag_semi:
                 return index, image, label
             else:

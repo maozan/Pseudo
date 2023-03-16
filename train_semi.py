@@ -15,7 +15,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from pseudo.dataset.augs_ALIA import cut_mix_label_adaptive, cut_mix, cut_out, cut_mix_label_inject, rotate
+from pseudo.dataset.augs_ALIA import cut_mix_label_adaptive, cut_mix, cut_out, cut_mix_label_inject, rotate, Perspective, Affine
 from pseudo.dataset.builder import get_loader
 from pseudo.models.model_helper import ModelBuilder
 from pseudo.utils.dist_helper import setup_distributed
@@ -339,7 +339,8 @@ def train(
                 del pred_u
             model.train()
             
-            # 2. apply strong on image_u_aug
+            # 2. apply strong on image_u_aug 
+            # note: Strong Aug must be placed outside 
             if cfg["trainer"]["unsupervised"].get("use_strong", False):
                 if cfg["trainer"]["unsupervised"].get("use_cutmix_adaptive", False):
                     # using adaptive cutmix (with label inject)
@@ -354,6 +355,14 @@ def train(
                 elif cfg["trainer"]["unsupervised"].get("use_rotate", False):
                     # using rotate
                     image_u_aug, pseudo_label, pseudo_confid = rotate(image_u_aug, pseudo_label, pseudo_confid)
+                
+                elif cfg["trainer"]["unsupervised"].get("use_perspective", False):
+                    # using rotate
+                    image_u_aug, pseudo_label, pseudo_confid = Perspective(image_u_aug, pseudo_label, pseudo_confid)
+                
+                elif cfg["trainer"]["unsupervised"].get("use_Affine", False):
+                    # using rotate
+                    image_u_aug, pseudo_label, pseudo_confid = Affine(image_u_aug, pseudo_label, pseudo_confid)
 
                 elif cfg["trainer"]["unsupervised"].get("use_cutmix", False):
                     # using navie cutmix
