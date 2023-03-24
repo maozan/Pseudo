@@ -310,12 +310,28 @@ class OhemCrossEntropy2dTensor(nn.Module):
 def compute_unsupervised_loss_by_threshold(predict, target, logits, thresh=0.95):
     batch_size, num_class, h, w = predict.shape
     thresh_mask = logits.ge(thresh).bool() * (target != 255).bool()
-    target[~thresh_mask] = 255
+    target[~thresh_mask] = 255 # 能有这个赋值操作一定要没有梯度
     loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
     return loss.mean(), thresh_mask.float().mean()
 
-def compute_unsupervised_loss(predict, target):
-    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
+def compute_unsupervised_loss(predict, target, mask):
+    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none") * mask.float()
+    return loss.mean()
+
+
+def compute_unsupervised_loss_softmatch(predict, target, logits):
+    mean = torch.mean(logits)
+    var = torch.var(logits, unbiased=True)
+    gussian_mask = torch.ones_like(target)
+    thresh_mask = logits.le(mean).bool()
+
+    # 计算高斯加权项
+    mask = torch.exp(-((torch.clamp(logits - mean, max=0.0) ** 2) / (2 * var ** 2)))
+
+    gussian_mask = torch.where(thresh_mask == True, mask, gussian_mask)
+
+    # target[~thresh_mask] = 255 # 能有这个赋值操作一定要没有梯度
+    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none") * gussian_mask.float()
     return loss.mean()
 
 
