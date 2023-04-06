@@ -42,8 +42,8 @@ def rand_bbox(size, lam=None):
 # # 1 cutmix label-adaptive 
 # # # # # # # # # # # # # # # # # # # # # 
 def cut_mix_label_adaptive(unlabeled_image, unlabeled_mask, unlabeled_logits, 
-        labeled_image, labeled_mask, lst_confidences):
-    assert len(lst_confidences) == len(unlabeled_image), "Ensure the confidence is properly obtained"
+        labeled_image, labeled_mask, lst_confidences=None):
+    # assert len(lst_confidences) == len(unlabeled_image), "Ensure the confidence is properly obtained"
     assert labeled_image.shape == unlabeled_image.shape, "Ensure shape match between lb and unlb"
     mix_unlabeled_image = unlabeled_image.clone()
     mix_unlabeled_target = unlabeled_mask.clone()
@@ -59,26 +59,26 @@ def cut_mix_label_adaptive(unlabeled_image, unlabeled_mask, unlabeled_logits,
     
     # 3) labeled adaptive
     for i in range(0, mix_unlabeled_image.shape[0]):
-        if np.random.random() > lst_confidences[i]:
-            mix_unlabeled_image[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
-            labeled_image[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+        # if np.random.random() > lst_confidences[i]:
+        mix_unlabeled_image[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+        labeled_image[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+    
+        mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            labeled_mask[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
         
-            mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
-                labeled_mask[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
-            
-            mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
-                labeled_logits[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+        mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            labeled_logits[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
     
     # 4) copy and paste
     for i in range(0, unlabeled_image.shape[0]):
-            unlabeled_image[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                mix_unlabeled_image[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+        unlabeled_image[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_image[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
 
-            unlabeled_mask[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                mix_unlabeled_target[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
-                
-            unlabeled_logits[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
-                mix_unlabeled_logits[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+        unlabeled_mask[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_target[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+            
+        unlabeled_logits[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_logits[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
     
     del mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits, labeled_logits
     
@@ -111,7 +111,7 @@ def cut_mix(image_u_aug, label_u_aug, logits_u_aug, image_u_intense=None):
             logits_u_aug[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
     
     if image_u_intense is not None:
-            return image_cutmix, image_intense_cutmix, label_cutmix, logits_cutmix
+            return image_cutmix, label_cutmix, logits_cutmix, image_intense_cutmix
 
     return image_cutmix, label_cutmix, logits_cutmix
 
@@ -200,8 +200,8 @@ def Affine(image, label, confidence):
 
     return imgs, label, confidence
 
-def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l, confidence, ramdom_num=1):
-    ramdom_list =  random.choices([1, 2, 3, 4, 5, 6, 7], k=ramdom_num)
+def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l, ramdom_num=1):
+    ramdom_list =  random.choices([1, 3], k=ramdom_num)
     for i in ramdom_list:
         if i == 1:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
@@ -209,8 +209,7 @@ def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l,
                             pseudo_label,
                             pseudo_confid, 
                             image_l,
-                            label_l, 
-                            confidence
+                            label_l
                         )
         if i == 2:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_inject(

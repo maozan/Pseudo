@@ -346,3 +346,117 @@ def compute_unsupervised_loss_by_threshold_hardness(predict, target, logits, thr
     assert loss.shape == hardness_tensor.shape, "wrong hardness calculation!"
     loss *= hardness_tensor
     return loss.mean()
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# # # # #  3. calculate unsupervised loss by entropy thresh
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+def compute_unsupervised_loss_by_entropy_threshold(predict, target, drop_percent, pseudo_entropy):
+    batch_size, num_class, h, w = predict.shape
+    thresh = np.percentile(
+            pseudo_entropy[target != 255].detach().cpu().numpy().flatten(), drop_percent
+        )
+    thresh_mask = pseudo_entropy.ge(thresh).bool() * (target != 255).bool() # ge() 是大于等于的操作
+    target[~thresh_mask] = 255 # 能有这个赋值操作一定要没有梯度
+    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
+    return loss.mean(), thresh_mask.float().mean()
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# # # # #  4. calculate unsupervised loss by prior thresh
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+def compute_unsupervised_loss_by_prior_threshold(
+                    predict, 
+                    target, 
+                    logits, 
+                    thresh_prior, 
+                    best_miou, 
+                    epoch=0,
+                    total_epoch=10, 
+                    thresh=0.95):
+    batch_size, num_class, h, w = predict.shape
+
+    if epoch < total_epoch:
+        thresh = 0.5 * (1 + (epoch / total_epoch))
+    else:
+        thresh = 0.95 # 0.90, 0.95
+
+    thresh_mask = logits.ge(thresh).bool() * (target != 255).bool()
+
+    if epoch < total_epoch:
+        for i in range(len(thresh_prior)):
+            if thresh_prior[i] < best_miou:
+                thresh_mask = torch.where(target == i, False, thresh_mask)
+
+    target[~thresh_mask] = 255
+    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
+
+    # # 参与时的loss计算
+    # loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none") * mask
+    return loss.mean(), thresh_mask.float().mean()
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# # # # #  5. calculate unsupervised contrast loss
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
+# crop_f = RandomCrop4(size=(32, 32))
+
+def batch_pixelwise_distanceloss(inputs, target, drop_percent, pseudo_entropy, pseudo_label, temp=0.5):
+    ## 是在生成pred前的特征空间做的操作
+    # input : b x c x h x w
+    # target : b x c x h x w
+    # final_indicies : b x h x w
+
+    print(pseudo_entropy.shape, target.shape)
+
+    thresh = np.percentile(
+            pseudo_entropy[pseudo_label != 255].cpu().numpy().flatten(), drop_percent
+        )
+    thresh_mask = pseudo_entropy.ge(thresh).bool() * (pseudo_label != 255).bool() # ge() 是大于等于的操作
+    pseudo_label[~thresh_mask] = 255 # 能有这个赋值操作一定要没有梯度
+
+    b_loss = 0
+    label = torch.unique(pseudo_label)
+    label = label[label != 255]
+
+    # mask : b x h x w
+    inputs = inputs.permute(1, 0, 2, 3)  # c x b x h x w
+    target = target.permute(1, 0, 2, 3)  # c x b x h x w
+
+    for idx in label:
+        # if idx == 0:
+        #     continue
+        input_vec = inputs[:, (idx == pseudo_label)].T  # n x 128
+        print(input_vec.shape)
+        input_vec = input_vec / input_vec.norm(dim=1, keepdim=True).clamp(min=1e-8)
+
+        pos_vec = target[:, (idx == pseudo_label)]  # 128 x n
+        print(pos_vec.shape)
+        pos_vec = pos_vec / pos_vec.norm(dim=0, keepdim=True).clamp(min=1e-8)
+
+        neg_v = target[:, (idx != pseudo_label) & (pseudo_label != 255)]  # 128 x m
+        print(neg_v.shape)
+        neg_v = neg_v / neg_v.norm(dim=0, keepdim=True).clamp(min=1e-8)     
+
+        pos_pair = torch.mm(input_vec, pos_vec)
+        neg_pair = torch.mm(input_vec, neg_v)
+        pos_pair = torch.exp(pos_pair / temp).sum().clamp(min=1e-8)
+        neg_pair = torch.exp(neg_pair / temp).sum().clamp(min=1e-8)
+
+        b_loss += -(torch.log(pos_pair / (neg_pair + pos_pair))) / torch.count_nonzero(
+            (idx == pseudo_label).long()
+        )
+
+    if len(label) == 0:
+        return 0
+    else:
+        return b_loss / len(label)
+
+
+def pixelwisecontrastiveloss(inputs, targets, drop_percent, pseudo_entropy, pseudo_label):
+
+    tot_loss = 0
+    
+    tot_loss += batch_pixelwise_distanceloss(inputs, targets, drop_percent, pseudo_entropy, pseudo_label)
+    
+    return tot_loss
