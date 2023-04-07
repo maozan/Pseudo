@@ -19,7 +19,7 @@ from pseudo.dataset.augs_ALIA import random_strong_aug
 from pseudo.dataset.builder import get_loader
 from pseudo.models.model_helper import ModelBuilder
 from pseudo.utils.dist_helper import setup_distributed
-from pseudo.utils.loss_helper import get_criterion, compute_unsupervised_loss_by_prior_threshold
+from pseudo.utils.loss_helper import get_criterion, compute_unsupervised_loss_by_prior_threshold, compute_unsupervised_loss_by_threshold
 from pseudo.utils.lr_helper import get_optimizer, get_scheduler
 from pseudo.utils.utils import AverageMeter, intersectionAndUnion, load_state
 from pseudo.utils.utils import init_log, get_rank, get_world_size, set_random_seed, setup_default_logging
@@ -368,19 +368,24 @@ def train(
                     # obtain pseudos
                     pseudo_confid_ta, pseudo_label_ta = torch.max(pred_u_ta, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
 
-                    pseudo_confid = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_confid, pseudo_confid_ta)
-                    pseudo_label = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_label, pseudo_label_ta)
+                    # pseudo_confid = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_confid, pseudo_confid_ta)
+                    # pseudo_label = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_label, pseudo_label_ta)
+
+                    # pred_u = 0.5 * pred_u_t + 0.5 * pred_u_ta
+                    pred_u = torch.where(pred_u_t >= pred_u_ta, pred_u_t, pred_u_ta)
+
+                    pseudo_confid, pseudo_label = torch.max(pred_u, dim=1)                    
 
                 # # obtain confidence
-                # entropy = -torch.sum(pred_u * torch.log(pred_u + 1e-10), dim=1)
-                # pseudo_entropy = entropy
-                # entropy /= np.log(cfg["net"]["num_classes"])
-                # confidence = 1.0 - entropy
-                # confidence = confidence * pseudo_confid
-                # confidence = confidence.mean(dim=[1,2])  # 1*C
-                # confidence = confidence.cpu().numpy().tolist()
-                # # confidence = logits_u_aug.ge(p_threshold).float().mean(dim=[1,2]).cpu().numpy().tolist()
-                # del pred_u
+                entropy = -torch.sum(pred_u * torch.log(pred_u + 1e-10), dim=1)
+                pseudo_entropy = entropy
+                entropy /= np.log(cfg["net"]["num_classes"])
+                confidence = 1.0 - entropy
+                confidence = confidence * pseudo_confid
+                confidence = confidence.mean(dim=[1,2])  # 1*C
+                confidence = confidence.cpu().numpy().tolist()
+                # confidence = logits_u_aug.ge(p_threshold).float().mean(dim=[1,2]).cpu().numpy().tolist()
+                del pred_u
             model.train()
             
             # 2. apply strong on image_u_aug 
@@ -391,6 +396,7 @@ def train(
                             pseudo_confid, 
                             image_l,
                             label_l, 
+                            confidence,
                             ramdom_num = cfg["trainer"]["unsupervised"].get("random_strong_aug", 1)
                         )
 
@@ -419,16 +425,16 @@ def train(
 
             # 5. unsupervised loss
             # label_u_aug 和 logits_u_aug用detach是要斩断gradient
-            unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_prior_threshold( # 这个损失函数倒是可以借鉴
-                            pred_u_strong, 
-                            pseudo_label.detach(), 
-                            pseudo_confid.detach(),
-                            thresh_prior, 
-                            best_miou=pre_best_miou
-                        )
-            # unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_entropy_threshold(
-            #             pred_u_strong, pseudo_label.detach(),
-            #             drop_percent, pseudo_entropy.detach())
+            # unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_prior_threshold( # 这个损失函数倒是可以借鉴
+            #                 pred_u_strong, 
+            #                 pseudo_label.detach(), 
+            #                 pseudo_confid.detach(),
+            #                 thresh_prior, 
+            #                 best_miou=pre_best_miou
+            #             )
+            unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_threshold( # 这个损失函数倒是可以借鉴
+                        pred_u_strong, pseudo_label.detach(),
+                        pseudo_confid.detach(), thresh=p_threshold)
             unsup_loss *= cfg["trainer"]["unsupervised"].get("loss_weight", 1.0)
 
             # 6. contrast loss
