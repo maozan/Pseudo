@@ -460,3 +460,21 @@ def pixelwisecontrastiveloss(inputs, targets, drop_percent, pseudo_entropy, pseu
     tot_loss += batch_pixelwise_distanceloss(inputs, targets, drop_percent, pseudo_entropy, pseudo_label)
     
     return tot_loss
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+# # # # #  6. calculate mse loss
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+def mse_loss(inputs, targets, conf_mask=False, threshold=None):
+    assert inputs.requires_grad == True and targets.requires_grad == False
+    assert inputs.size() == targets.size() # (batch_size * num_classes * H * W)
+    inputs = F.softmax(inputs, dim=1)
+
+    if conf_mask:
+        loss_mat = F.mse_loss(inputs, targets, reduction='none')
+        mask = (targets.max(1)[0] > threshold)
+        loss_mat = loss_mat[mask.unsqueeze(1).expand_as(loss_mat)]
+        if loss_mat.shape.numel() == 0: loss_mat = torch.tensor([0.]).to(inputs.device)
+        return loss_mat.mean()
+    else:
+        return F.mse_loss(inputs, targets, reduction='mean') # take the mean over the batch_size
