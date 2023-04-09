@@ -166,6 +166,48 @@ def cut_mix_label_inject(unlabeled_image, unlabeled_mask, unlabeled_logits,
     
     return mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits 
 
+# # # # # # # # # # # # # # # # # # # # # 
+# # 5 cutmix_with_label_inject  
+# # # # # # # # # # # # # # # # # # # # #
+def cut_mix_slabel_inject(unlabeled_image, unlabeled_mask, unlabeled_logits, 
+        labeled_image, labeled_mask):
+    assert labeled_image.shape == unlabeled_image.shape, "Ensure shape match between lb and unlb"
+    mix_unlabeled_image = unlabeled_image.clone()
+    mix_unlabeled_target = unlabeled_mask.clone()
+    mix_unlabeled_logits = unlabeled_logits.clone()
+    labeled_logits = torch.ones_like(labeled_mask)
+
+    # 1) get the random mixing objects
+    u_rand_index = torch.randperm(unlabeled_image.size()[0])[:unlabeled_image.size()[0]]
+    
+    # 2) get box
+    l_bbx1, l_bby1, l_bbx2, l_bby2 = rand_bbox(unlabeled_image.size(), lam=np.random.beta(8, 2))
+
+    s_bbx1, s_bby1, s_bbx2, s_bby2 = rand_bbox(unlabeled_image.size(), lam=np.random.beta(4, 4))
+    
+    # 3) labeled inject
+    for i in range(0, mix_unlabeled_image.shape[0]):
+        mix_unlabeled_image[i, :, s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]] = \
+            labeled_image[u_rand_index[i], :, s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]]
+    
+        mix_unlabeled_target[i, s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]] = \
+            labeled_mask[u_rand_index[i], s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]]
+        
+        mix_unlabeled_logits[i, s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]] = \
+            labeled_logits[u_rand_index[i], s_bbx1[i]:s_bbx2[i], s_bby1[i]:s_bby2[i]]
+        
+    for i in range(0, mix_unlabeled_image.shape[0]):
+        mix_unlabeled_image[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            unlabeled_image[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+    
+        mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            unlabeled_image[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+        
+        mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+            unlabeled_image[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+    
+    return mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits 
+
 
 def rotate(image, label, confidence):
 
