@@ -332,7 +332,6 @@ def train(
         _, image_l, label_l = loader_l_iter.next()
         image_l, label_l = image_l.cuda(), label_l.cuda()
         _, image_u_weak, image_u_aug, _ = loader_u_iter.next()
-        # weak: weak aug, aug: intensity-base aug
         image_u_weak, image_u_aug = image_u_weak.cuda(), image_u_aug.cuda()
         
         # start the training
@@ -356,10 +355,10 @@ def train(
             p_threshold = cfg["trainer"]["unsupervised"].get("threshold", 0.95)
             with torch.no_grad():
                 model_teacher.eval()
-                pred_u_t, _ = model_teacher(image_u_weak.detach())
-                pred_u_t = F.softmax(pred_u_t, dim=1) # 归一化
+                pred_u, _ = model_teacher(image_u_weak.detach())
+                pred_u = F.softmax(pred_u, dim=1) # 归一化
                 # obtain pseudos
-                pseudo_confid, pseudo_label = torch.max(pred_u_t, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
+                pseudo_confid, pseudo_label = torch.max(pred_u, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
 
                 if model_teacher_assistant is not None:
                     model_teacher_assistant.eval()
@@ -372,7 +371,7 @@ def train(
                     # pseudo_label = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_label, pseudo_label_ta)
 
                     # pred_u = 0.5 * pred_u_t + 0.5 * pred_u_ta
-                    pred_u = torch.where(pred_u_t >= pred_u_ta, pred_u_t, pred_u_ta)
+                    pred_u = torch.where(pred_u >= pred_u_ta, pred_u, pred_u_ta)
 
                     pseudo_confid, pseudo_label = torch.max(pred_u, dim=1)                    
 
