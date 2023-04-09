@@ -201,10 +201,10 @@ def cut_mix_slabel_inject(unlabeled_image, unlabeled_mask, unlabeled_logits,
             unlabeled_image[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
     
         mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
-            unlabeled_image[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+            unlabeled_mask[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
         
         mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
-            unlabeled_image[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+            unlabeled_logits[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
     
     return mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits 
 
@@ -243,7 +243,7 @@ def Affine(image, label, confidence):
     return imgs, label, confidence
 
 def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l, confidence, ramdom_num=1):
-    ramdom_list =  random.choices([1, 3], k=ramdom_num)
+    ramdom_list =  random.choices([8], k=ramdom_num)
     for i in ramdom_list:
         if i == 1:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
@@ -256,6 +256,14 @@ def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l,
                         )
         if i == 2:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_inject(
+                            image_u_aug,
+                            pseudo_label,
+                            pseudo_confid, 
+                            image_l,
+                            label_l
+                        )
+        if i == 8:
+            image_u_aug, pseudo_label, pseudo_confid = cut_mix_slabel_inject(
                             image_u_aug,
                             pseudo_label,
                             pseudo_confid, 
