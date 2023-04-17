@@ -1,14 +1,16 @@
 tport=53907
-ngpu=1
+ngpu=2
 ROOT=.
 # 是单机多卡的方式
 
-CUDA_VISIBLE_DEVICES=3, \
+#CUDA_VISIBLE_DEVICES=0,3, 搭配ngpu=2使用，即使用0,3号两张显卡
+CUDA_VISIBLE_DEVICES=0,3, \
 python -m torch.distributed.launch \
     --nproc_per_node=${ngpu} \
     --node_rank=0 \
+    --master_port=${tport} \
     $ROOT/train_semi.py \
-    --config=$ROOT/exps/mrun_vocs/cutadap/config_semi.yaml --seed 2
+    --config=$ROOT/exps/compare/semi_voc_blender/r50_662/config_semi.yaml --seed 2
 
     # --config=$ROOT/exps/mrun_vocs/cutmix/config_semi.yaml --seed 2
     # --config=$ROOT/exps/mrun_vocs/cutadap/config_semi.yaml --seed 2

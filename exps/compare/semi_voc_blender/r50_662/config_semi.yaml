@@ -2,11 +2,11 @@
 # 1. datasets
 # # # # # # # # # # # # # # 
 dataset: # Required.
-  type: pascal_semi
+  type: pascal_semi # pascal voc: pascal_semi; cityscapce: cityscapes_semi
   train:
-    data_root: /public/home/umaozan9/perl5/datasets/VOCdevkit/VOC2012
-    data_list: ./data/splitsall/pascal/662/labeled.txt
-    batch_size: 16
+    data_root: /data1/lcx/maozan/SemiSL/DATASETS/VOCdevkit/VOC2012 # 修改为你自己的数据路径
+    data_list: ./data/splitsall/pascal/662/labeled.txt # 对应不同比例的数据划分
+    batch_size: 8 # 单张显卡batch_size 固定为8，两张一共16
     flip: True
     rand_resize: [0.5, 2.0]
     resize_base_size: 500
@@ -15,13 +15,13 @@ dataset: # Required.
       size: [513, 513]
     #---- 1) strong data augs ----#
     strong_aug:
-      num_augs: 3                       # !!!!!!!!!!!!!!!!!!!! key param1 (4): 1, 2, 3, 4  !!!!!!!!!!!!!!!!!!!!
-      flag_use_random_num_sampling: True        # !!!!!!!!!!!!!!!!!!!! key param1 (2): True, False  !!!!!!!!!!!!!!!!!!!!
+      num_augs: 3                       
+      flag_use_random_num_sampling: True        
   val:
-    data_root: /public/home/umaozan9/perl5/datasets/VOCdevkit/VOC2012
+    data_root: /data1/lcx/maozan/SemiSL/DATASETS/VOCdevkit/VOC2012
     data_list: ./data/splitsall/pascal/val.txt
     batch_size: 1
-  n_sup: 662
+  n_sup: 662 # 修改数据划分时候，这里也要改变
   workers: 4
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
@@ -32,7 +32,7 @@ dataset: # Required.
 # # # # # # # # # # # # # # 
 trainer: # Required.
   epochs: 80
-  sup_only_epoch: 0 # 0, 1
+  sup_only_epoch: 0 # 设置为0，即全部是半监督训练，设置为epoch数，如80，即全部是有监督训练
   evaluate_student: True
   optimizer:
     type: SGD
@@ -85,7 +85,7 @@ net: # Required.
   sync_bn: True
   ema_decay: 0.999
   encoder:
-    type: pseudo.models.resnet.resnet50
+    type: pseudo.models.resnet.resnet50 # r50时候， r101时候用下面注释的两行
     pretrain: ./pretrained/resnet50.pth
     # type: augseg.models.resnet.resnet101
     # pretrain: ./pretrained/resnet101.pth
