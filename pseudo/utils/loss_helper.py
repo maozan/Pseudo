@@ -314,8 +314,8 @@ def compute_unsupervised_loss_by_threshold(predict, target, logits, thresh=0.95)
     loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
     return loss.mean(), thresh_mask.float().mean()
 
-def compute_unsupervised_loss(predict, target, mask):
-    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none") * mask.float()
+def compute_unsupervised_loss(predict, target):
+    loss = F.cross_entropy(predict, target, ignore_index=255, reduction="none")
     return loss.mean()
 
 

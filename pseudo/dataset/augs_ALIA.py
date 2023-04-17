@@ -84,6 +84,46 @@ def cut_mix_label_adaptive(unlabeled_image, unlabeled_mask, unlabeled_logits,
     
     return unlabeled_image, unlabeled_mask, unlabeled_logits 
 
+def cut_mix_out_adaptive(unlabeled_image, unlabeled_mask, unlabeled_logits, 
+        labeled_image, labeled_mask, lst_confidences):
+    assert len(lst_confidences) == len(unlabeled_image), "Ensure the confidence is properly obtained"
+    assert labeled_image.shape == unlabeled_image.shape, "Ensure shape match between lb and unlb"
+    mix_unlabeled_image = unlabeled_image.clone()
+    mix_unlabeled_target = unlabeled_mask.clone()
+    mix_unlabeled_logits = unlabeled_logits.clone()
+    labeled_logits = torch.ones_like(labeled_mask)
+
+    # 1) get the random mixing objects
+    u_rand_index = torch.randperm(unlabeled_image.size()[0])[:unlabeled_image.size()[0]]
+    
+    # 2) get box
+    l_bbx1, l_bby1, l_bbx2, l_bby2 = rand_bbox(unlabeled_image.size(), lam=np.random.beta(8, 2))
+    u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(unlabeled_image.size(), lam=np.random.beta(4, 4))
+    
+    # 3) cutout adaptive
+    for i in range(0, mix_unlabeled_image.shape[0]):
+        if np.random.random() > lst_confidences[i]:
+            mix_unlabeled_image[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = 0
+        
+            mix_unlabeled_target[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = 0
+            
+            mix_unlabeled_logits[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = 1.0
+            
+    # 4) copy and paste
+    for i in range(0, unlabeled_image.shape[0]):
+        unlabeled_image[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_image[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+
+        unlabeled_mask[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_target[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+            
+        unlabeled_logits[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            mix_unlabeled_logits[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+    
+    del mix_unlabeled_image, mix_unlabeled_target, mix_unlabeled_logits, labeled_logits
+    
+    return unlabeled_image, unlabeled_mask, unlabeled_logits
+
 
 # # # # # # # # # # # # # # # # # # # # # 
 # # 2 cutmix  
@@ -95,7 +135,7 @@ def cut_mix(image_u_aug, label_u_aug, logits_u_aug, image_u_intense=None):
     label_cutmix = label_u_aug.clone()
     logits_cutmix = logits_u_aug.clone()
     u_rand_index = torch.randperm(image_u_aug.size()[0])[:image_u_aug.size()[0]].cuda()
-    u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(4, 4))
+    u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(8, 2))
 
     for i in range(0, image_cutmix.shape[0]):
         image_cutmix[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
@@ -242,11 +282,20 @@ def Affine(image, label, confidence):
 
     return imgs, label, confidence
 
-def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l, confidence, ramdom_num=1):
+def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l, label_l, confidence, ramdom_num=1):
     ramdom_list =  random.choices([8], k=ramdom_num)
     for i in ramdom_list:
         if i == 1:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
+                            image_u_aug,
+                            pseudo_label,
+                            pseudo_confid, 
+                            image_l,
+                            label_l,
+                            confidence
+                        )
+        if i == 9:
+            image_u_aug, pseudo_label, pseudo_confid = cut_mix_out_adaptive(
                             image_u_aug,
                             pseudo_label,
                             pseudo_confid, 
@@ -282,3 +331,48 @@ def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l,label_l,
             image_u_aug, pseudo_label, pseudo_confid = Perspective(image_u_aug, pseudo_label, pseudo_confid)
 
         return image_u_aug, pseudo_label, pseudo_confid
+    
+def random_strong_aug_v2(image_u_aug, pseudo_label, pseudo_confid, image_l, label_l, confidence):
+    image_cutmix = image_u_aug.clone()
+    label_cutmix = pseudo_label.clone()
+    logits_cutmix = pseudo_confid.clone()
+    u_rand_index = torch.randperm(image_u_aug.size()[0])[:image_u_aug.size()[0]].cuda()
+    u_bbx1, u_bby1, u_bbx2, u_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(4, 4))
+    l_bbx1, l_bby1, l_bbx2, l_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(8, 2))
+    o_bbx1, o_bby1, o_bbx2, o_bby2 = rand_bbox(image_u_aug.size(), lam=np.random.beta(8, 2))
+
+    # cutmix
+    for i in range(0, image_cutmix.shape[0]):
+        image_cutmix[i, :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            image_u_aug[u_rand_index[i], :, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+
+        label_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            pseudo_label[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+
+        logits_cutmix[i, u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]] = \
+            pseudo_confid[u_rand_index[i], u_bbx1[i]:u_bbx2[i], u_bby1[i]:u_bby2[i]]
+        
+    # random labelinj and out
+    for i in range(0, image_u_aug.shape[0]):
+        if np.random.random() > confidence[i]:
+            random_num = random.choice([1, 2])
+            random_list = random.choices([1, 2], k=random_num)
+            for ii in random_list:
+                # labelinj
+                if ii == 1:
+                    image_cutmix[i, :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+                        image_l[u_rand_index[i], :, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+
+                    label_cutmix[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = \
+                        label_l[u_rand_index[i], l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]]
+
+                    logits_cutmix[i, l_bbx1[i]:l_bbx2[i], l_bby1[i]:l_bby2[i]] = 1.0     
+                # out
+                if ii == 2:
+                    image_cutmix[i, :, o_bbx1[i]:o_bbx2[i], o_bby1[i]:o_bby2[i]] = 0
+
+                    label_cutmix[i, o_bbx1[i]:o_bbx2[i], o_bby1[i]:o_bby2[i]] = 0
+
+                    logits_cutmix[i, o_bbx1[i]:o_bbx2[i], o_bby1[i]:o_bby2[i]] = 1.0
+
+    return image_cutmix, label_cutmix, logits_cutmix
