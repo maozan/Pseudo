@@ -15,7 +15,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from pseudo.dataset.augs_ALIA import cut_mix_label_adaptive, cut_mix, cut_out, cut_mix_label_inject, rotate, Perspective, Affine
+from pseudo.dataset.augs_ALIA import random_strong_aug
 from pseudo.dataset.builder import get_loader
 from pseudo.models.model_helper import ModelBuilder
 from pseudo.utils.dist_helper import setup_distributed
@@ -27,8 +27,17 @@ from pseudo.utils.utils import init_log, get_rank, get_world_size, set_random_se
 import warnings 
 warnings.filterwarnings('ignore')
 
+# global var
+pre_best_miou = 0.
+cur_miou = 0.
+thresh_prior = np.array([1., 1., 0., 1., 0., 1., 1., 1., 1., 0., 1., 0., 1., 1., 1., 1., 0., 1., 0., 1., 0.])
 
 def main(in_args):
+
+    global pre_best_miou
+    global cur_miou
+    global thresh_prior
+
     args = in_args
     if args.seed is not None:
         # print("set random seed to", args.seed)
@@ -126,13 +135,22 @@ def main(in_args):
         output_device=local_rank,
         find_unused_parameters=False,
     )
-    for p in model_teacher.parameters():
+    model_teacher_assistant = ModelBuilder(cfg["net"])
+    model_teacher_assistant.cuda()
+    model_teacher_assistant = torch.nn.parallel.DistributedDataParallel(
+        model_teacher_assistant,
+        device_ids=[local_rank],
+        output_device=local_rank,
+        find_unused_parameters=False,
+    )
+    for p in model_teacher_assistant.parameters():
         p.requires_grad = False
 
     # initialize teacher model -- not neccesary if using warmup
     with torch.no_grad():
-        for t_params, s_params in zip(model_teacher.parameters(), model.parameters()):
+        for t_params, ta_params, s_params in zip(model_teacher.parameters(), model_teacher_assistant.parameters(), model.parameters()):
             t_params.data = s_params.data
+            ta_params.data = t_params.data
 
     ######################################
     # 6. resume
@@ -154,6 +172,9 @@ def main(in_args):
             )
             _, _ = load_state(
                 lastest_model, model_teacher, optimizer=optimizer, key="teacher_state"
+            )
+            _, _ = load_state(
+                lastest_model, model_teacher_assistant, optimizer=optimizer, key="teacher_assistant_state"
             )
 
     optimizer_start = get_optimizer(params_list, cfg_optim)
@@ -180,7 +201,8 @@ def main(in_args):
             epoch,
             tb_logger,
             logger,
-            cfg
+            cfg,
+            model_teacher_assistant
         )
 
         # Validation and store checkpoint
@@ -201,8 +223,10 @@ def main(in_args):
                 prec_stu = validate(model, val_loader, epoch, logger, cfg)
             else:
                 prec_stu = -1000.0
-            prec_tea = validate(model_teacher, val_loader, epoch, logger, cfg)
+            prec_tea = validate(model_teacher, val_loader, epoch, logger, cfg, model_teacher_assistant)
             prec = prec_tea
+
+        cur_miou = prec_tea
 
         if rank == 0:
             state = {
@@ -210,6 +234,7 @@ def main(in_args):
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
                 "teacher_state": model_teacher.state_dict(),
+                "teacher_assistant_state": model_teacher_assistant.state_dict(),
                 "best_miou": best_prec,
             }
             if prec_stu > best_prec_stu:
@@ -221,6 +246,7 @@ def main(in_args):
                 best_epoch = epoch
                 state["best_miou"] = prec
                 torch.save(state, osp.join(cfg["save_path"], "ckpt_best.pth"))
+                pre_best_miou = best_prec
 
             torch.save(state, osp.join(cfg["save_path"], "ckpt.pth"))
             # save statistics
@@ -258,7 +284,12 @@ def train(
     tb_logger,
     logger,
     cfg,
+    model_teacher_assistant = None,
 ):
+
+    global pre_best_miou
+    global cur_miou
+    global thresh_prior
 
     ema_decay_origin = cfg["net"]["ema_decay"]
     rank, world_size = dist.get_rank(), dist.get_world_size()
@@ -287,6 +318,8 @@ def train(
     # start iterations
     model.train()
     model_teacher.eval()
+    if model_teacher_assistant is not None:
+        model_teacher_assistant.eval()
     for step in range(len(loader_l)):
         batch_start = time.time()
 
@@ -299,7 +332,6 @@ def train(
         _, image_l, label_l = loader_l_iter.next()
         image_l, label_l = image_l.cuda(), label_l.cuda()
         _, image_u_weak, image_u_aug, _ = loader_u_iter.next()
-        # weak: weak aug, aug: intensity-base aug
         image_u_weak, image_u_aug = image_u_weak.cuda(), image_u_aug.cuda()
         
         # start the training
@@ -327,9 +359,26 @@ def train(
                 pred_u = F.softmax(pred_u, dim=1) # 归一化
                 # obtain pseudos
                 pseudo_confid, pseudo_label = torch.max(pred_u, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
-                
-                # obtain confidence
+                pseudo_confid_t, pseudo_label_t = pseudo_confid.clone(), pseudo_label.clone()
+
+                if model_teacher_assistant is not None:
+                    model_teacher_assistant.eval()
+                    pred_u_ta, _ = model_teacher_assistant(image_u_weak.detach())
+                    pred_u_ta = F.softmax(pred_u_ta, dim=1) # 归一化
+                    # obtain pseudos
+                    pseudo_confid_ta, pseudo_label_ta = torch.max(pred_u_ta, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
+
+                    # pseudo_confid = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_confid, pseudo_confid_ta)
+                    # pseudo_label = torch.where(pseudo_confid >= pseudo_confid_ta, pseudo_label, pseudo_label_ta)
+
+                    # pred_u = 0.5 * pred_u + 0.5 * pred_u_ta
+                    pred_u = torch.where(pred_u >= pred_u_ta, pred_u, pred_u_ta)
+
+                    pseudo_confid, pseudo_label = torch.max(pred_u, dim=1)                    
+
+                # # obtain confidence
                 entropy = -torch.sum(pred_u * torch.log(pred_u + 1e-10), dim=1)
+                pseudo_entropy = entropy
                 entropy /= np.log(cfg["net"]["num_classes"])
                 confidence = 1.0 - entropy
                 confidence = confidence * pseudo_confid
@@ -341,48 +390,15 @@ def train(
             
             # 2. apply strong on image_u_aug 
             # note: Strong Aug must be placed outside 
-            if cfg["trainer"]["unsupervised"].get("use_strong", False):
-                if cfg["trainer"]["unsupervised"].get("use_cutmix_adaptive", False):
-                    # using adaptive cutmix (with label inject)
-                    image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
+            image_u_aug, pseudo_label, pseudo_confid = random_strong_aug(
                             image_u_aug,
                             pseudo_label,
                             pseudo_confid, 
                             image_l,
                             label_l, 
-                            confidence
+                            confidence,
+                            ramdom_num = cfg["trainer"]["unsupervised"].get("random_strong_aug", 1)
                         )
-                elif cfg["trainer"]["unsupervised"].get("use_rotate", False):
-                    # using rotate
-                    image_u_aug, pseudo_label, pseudo_confid = rotate(image_u_aug, pseudo_label, pseudo_confid)
-                
-                elif cfg["trainer"]["unsupervised"].get("use_perspective", False):
-                    # using rotate
-                    image_u_aug, pseudo_label, pseudo_confid = Perspective(image_u_aug, pseudo_label, pseudo_confid)
-                
-                elif cfg["trainer"]["unsupervised"].get("use_Affine", False):
-                    # using rotate
-                    image_u_aug, pseudo_label, pseudo_confid = Affine(image_u_aug, pseudo_label, pseudo_confid)
-
-                elif cfg["trainer"]["unsupervised"].get("use_cutmix", False):
-                    # using navie cutmix
-                    image_u_aug, pseudo_label, pseudo_confid = cut_mix(image_u_aug, pseudo_label, pseudo_confid)
-
-                elif cfg["trainer"]["unsupervised"].get("use_cutout", False):
-                    # using navie cutout
-                    image_u_aug, pseudo_label, pseudo_confid = cut_out(image_u_aug, pseudo_label, pseudo_confid)
-
-                elif cfg["trainer"]["unsupervised"].get("use_cutmix_labelinj", False):
-                    # using cutmix_label_inject
-                    image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_inject(
-                            image_u_aug,
-                            pseudo_label,
-                            pseudo_confid, 
-                            image_l,
-                            label_l,
-                        )  
-                else:
-                    raise NotImplementedError('The aug method is not implemented, please check code!')
 
             # 3. forward concate labeled + unlabeld into student networks
             num_labeled = len(image_l)
@@ -409,13 +425,31 @@ def train(
 
             # 5. unsupervised loss
             # label_u_aug 和 logits_u_aug用detach是要斩断gradient
+            # unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_prior_threshold( # 这个损失函数倒是可以借鉴
+            #                 pred_u_strong, 
+            #                 pseudo_label.detach(), 
+            #                 pseudo_confid.detach(),
+            #                 thresh_prior, 
+            #                 best_miou=pre_best_miou
+            #             )
             unsup_loss, pseduo_high_ratio = compute_unsupervised_loss_by_threshold( # 这个损失函数倒是可以借鉴
                         pred_u_strong, pseudo_label.detach(),
                         pseudo_confid.detach(), thresh=p_threshold)
-            unsup_loss *= cfg["trainer"]["unsupervised"].get("loss_weight", 1.0)
-            del pred_l, pred_u_strong, pseudo_label, pseudo_confid
+            unsup_loss_1, _ = compute_unsupervised_loss_by_threshold(
+                        pred_u_strong, pseudo_label_t.detach(),
+                        pseudo_confid.detach(), thresh=p_threshold)
+            unsup_loss_2, _ = compute_unsupervised_loss_by_threshold(
+                        pred_u_strong, pseudo_label_ta.detach(),
+                        pseudo_confid.detach(), thresh=p_threshold)
+            unsuploss = 0.5*unsup_loss + 0.25*unsup_loss_1 + 0.25*unsup_loss_2
 
-        loss = sup_loss + unsup_loss
+            # 6. contrast loss
+            # contrast_loss = pixelwisecontrastiveloss(feat_u_strong, feat_u_t.detach(), drop_percent, pseudo_entropy.detach(), pseudo_label.detach())
+            # contrast_loss *= cfg["trainer"]["unsupervised"].get("loss_weight", 1.0)
+            del pred_l, pred_u_strong, pseudo_label, pseudo_confid
+            # print('contrasy loss: ', contrast_loss)
+
+        loss = sup_loss + cfg["trainer"]["unsupervised"].get("loss_weight", 1.0) * unsuploss
 
         # update student model
         optimizer.zero_grad()
@@ -438,12 +472,23 @@ def train(
             else:
                 ema_decay = 0.0
             # update weight
-            for param_train, param_eval in zip(model.parameters(), model_teacher.parameters()):
-                param_eval.data = param_eval.data * ema_decay + param_train.data * (1 - ema_decay)
-            # update bn
-            for buffer_train, buffer_eval in zip(model.buffers(), model_teacher.buffers()):
-                buffer_eval.data = buffer_eval.data * ema_decay + buffer_train.data * (1 - ema_decay)
-                # buffer_eval.data = buffer_train.data
+            if model_teacher_assistant is not None:
+                for param_train, param_eval, param_eval_ta in zip(model.parameters(), model_teacher.parameters(), model_teacher_assistant.parameters()):
+                    if cur_miou > pre_best_miou:
+                        param_eval_ta.data = param_eval.data
+                    param_eval.data = param_eval.data * ema_decay + param_train.data * (1 - ema_decay) 
+                # update bn
+                for buffer_train, buffer_eval, buffer_eval_ta in zip(model.buffers(), model_teacher.buffers(), model_teacher_assistant.buffers()):
+                    if cur_miou > pre_best_miou:
+                        buffer_eval_ta.data = buffer_eval.data
+                    buffer_eval.data = buffer_eval.data * ema_decay + buffer_train.data * (1 - ema_decay)
+            else:
+                for param_train, param_eval in zip(model.parameters(), model_teacher.parameters()):
+                    param_eval.data = param_eval.data * ema_decay + param_train.data * (1 - ema_decay)
+                # update bn
+                for buffer_train, buffer_eval in zip(model.buffers(), model_teacher.buffers()):
+                    buffer_eval.data = buffer_eval.data * ema_decay + buffer_train.data * (1 - ema_decay)
+                    # buffer_eval.data = buffer_train.data
 
         # gather all loss from different gpus
         reduced_sup_loss = sup_loss.clone().detach()
@@ -492,9 +537,16 @@ def validate(
     data_loader,
     epoch,
     logger,
-    cfg
+    cfg, 
+    model_teacher_assistant = None
 ):
+    global pre_best_miou
+    global cur_miou
+    global thresh_prior
+    
     model.eval()
+    if model_teacher_assistant is not None:
+        model_teacher_assistant.eval()
     data_loader.sampler.set_epoch(epoch)
 
     num_classes, ignore_label = (
@@ -513,6 +565,9 @@ def validate(
 
         with torch.no_grad():
             output, _ = model(images)
+            if model_teacher_assistant is not None:
+                output_ta, _ = model_teacher_assistant(images)
+                output = torch.where(output_ta >= output, output_ta, output)
 
         # get the output produced by model_teacher
         output = output.data.max(1)[1].cpu().numpy()
@@ -537,6 +592,8 @@ def validate(
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     mIoU = np.mean(iou_class)
+
+    thresh_prior = iou_class
 
     if rank == 0:
         for i, iou in enumerate(iou_class):
