@@ -283,7 +283,7 @@ def Affine(image, label, confidence):
     return imgs, label, confidence
 
 def random_strong_aug(image_u_aug, pseudo_label, pseudo_confid, image_l, label_l, confidence, ramdom_num=1):
-    ramdom_list =  random.choices([8], k=ramdom_num)
+    ramdom_list =  random.choices([1, 2, 3, 4, 8, 9], k=ramdom_num)
     for i in ramdom_list:
         if i == 1:
             image_u_aug, pseudo_label, pseudo_confid = cut_mix_label_adaptive(
