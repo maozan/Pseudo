@@ -361,7 +361,7 @@ def train(
                 pseudo_confid, pseudo_label = torch.max(pred_u, dim=1) # 弱增强产生的pred，作为强增强的pseudo label
                 pseudo_confid_t, pseudo_label_t = pseudo_confid.clone(), pseudo_label.clone()
 
-                if model_teacher_assistant is not None:
+                if model_teacher_assistant is not None: # 这里变动，对应的validation中的fusion部分也要变动
                     model_teacher_assistant.eval()
                     pred_u_ta, _ = model_teacher_assistant(image_u_weak.detach())
                     pred_u_ta = F.softmax(pred_u_ta, dim=1) # 归一化
@@ -437,12 +437,13 @@ def train(
                         pseudo_confid.detach(), thresh=p_threshold)
             unsup_loss_1, _ = compute_unsupervised_loss_by_threshold(
                         pred_u_strong, pseudo_label_t.detach(),
-                        pseudo_confid.detach(), thresh=p_threshold)
+                        pseudo_confid_t.detach(), thresh=p_threshold)
             unsup_loss_2, _ = compute_unsupervised_loss_by_threshold(
                         pred_u_strong, pseudo_label_ta.detach(),
-                        pseudo_confid.detach(), thresh=p_threshold)
-            unsuploss = 0.5*unsup_loss + 0.25*unsup_loss_1 + 0.25*unsup_loss_2
-
+                        pseudo_confid_ta.detach(), thresh=p_threshold)
+            #unsuploss = 0.5*unsup_loss + 0.25*unsup_loss_1 + 0.25*unsup_loss_2
+            unsuploss = unsup_loss 
+            
             # 6. contrast loss
             # contrast_loss = pixelwisecontrastiveloss(feat_u_strong, feat_u_t.detach(), drop_percent, pseudo_entropy.detach(), pseudo_label.detach())
             # contrast_loss *= cfg["trainer"]["unsupervised"].get("loss_weight", 1.0)
