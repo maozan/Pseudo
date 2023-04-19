@@ -441,8 +441,8 @@ def train(
             unsup_loss_2, _ = compute_unsupervised_loss_by_threshold(
                         pred_u_strong, pseudo_label_ta.detach(),
                         pseudo_confid_ta.detach(), thresh=p_threshold)
-            #unsuploss = 0.5*unsup_loss + 0.25*unsup_loss_1 + 0.25*unsup_loss_2
-            unsuploss = unsup_loss 
+            unsuploss = 0.5*unsup_loss + 0.25*unsup_loss_1 + 0.25*unsup_loss_2
+            # unsuploss = unsup_loss 
             
             # 6. contrast loss
             # contrast_loss = pixelwisecontrastiveloss(feat_u_strong, feat_u_t.detach(), drop_percent, pseudo_entropy.detach(), pseudo_label.detach())
